@@ -1,78 +1,78 @@
 {
-	"name": "kunilingus-bridge",
-	"displayName": "Kunilingus Bridge",
-	"publisher": "fonnzer",
-	"description": "HTTP bridge for Clawbot to access GitHub Copilot LLM via VS Code",
-	"version": "1.0.0",
-	"engines": {
-		"vscode": "^1.109.0"
-	},
-	"categories": [
-		"Other"
-	],
-	"activationEvents": [
-		"onStartupFinished"
-	],
-	"main": "./out/extension.js",
-	"contributes": {
-		"commands": [
-			{
-				"command": "kunilingus-bridge.start",
-				"title": "Kunilingus Bridge: Start Server"
-			},
-			{
-				"command": "kunilingus-bridge.stop",
-				"title": "Kunilingus Bridge: Stop Server"
-			},
-			{
-				"command": "kunilingus-bridge.status",
-				"title": "Kunilingus Bridge: Show Status"
-			}
-		],
-		"configuration": {
-			"title": "Kunilingus Bridge",
-			"properties": {
-				"kunilingus-bridge.port": {
-					"type": "number",
-					"default": 3789,
-					"description": "Port for the HTTP bridge server"
-				},
-				"kunilingus-bridge.autoStart": {
-					"type": "boolean",
-					"default": true,
-					"description": "Automatically start the bridge server on VS Code startup"
-				},
-				"kunilingus-bridge.apiKey": {
-					"type": "string",
-					"default": "",
-					"description": "Optional API key to protect the bridge (leave empty to disable)"
-				},
-				"kunilingus-bridge.defaultModel": {
-					"type": "string",
-					"default": "",
-					"description": "Model family override. Leave empty to auto-select whatever Copilot model is available."
-				}
-			}
-		}
-	},
-	"scripts": {
-		"vscode:prepublish": "npm run compile",
-		"compile": "tsc -p ./",
-		"watch": "tsc -watch -p ./",
-		"pretest": "npm run compile && npm run lint",
-		"lint": "eslint src",
-		"test": "vscode-test",
-		"package": "vsce package"
-	},
-	"devDependencies": {
-		"@types/vscode": "^1.109.0",
-		"@types/mocha": "^10.0.10",
-		"@types/node": "22.x",
-		"typescript-eslint": "^8.54.0",
-		"eslint": "^9.39.2",
-		"typescript": "^5.9.3",
-		"@vscode/test-cli": "^0.0.12",
-		"@vscode/test-electron": "^2.5.2",
-		"@vscode/vsce": "^3.0.0"
-	}
+  "name": "kunilingus-bridge",
+  "displayName": "Kunilingus Bridge",
+  "publisher": "fonnzer",
+  "description": "HTTP bridge for Clawbot to access GitHub Copilot LLM via VS Code",
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kunilingus-bridge.start",
+        "title": "Kunilingus Bridge: Start Server"
+      },
+      {
+        "command": "kunilingus-bridge.stop",
+        "title": "Kunilingus Bridge: Stop Server"
+      },
+      {
+        "command": "kunilingus-bridge.status",
+        "title": "Kunilingus Bridge: Show Status"
+      }
+    ],
+    "configuration": {
+      "title": "Kunilingus Bridge",
+      "properties": {
+        "kunilingus-bridge.port": {
+          "type": "number",
+          "default": 3789,
+          "description": "Port for the HTTP bridge server"
+        },
+        "kunilingus-bridge.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the bridge server on VS Code startup"
+        },
+        "kunilingus-bridge.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Optional API key to protect the bridge (leave empty to disable)"
+        },
+        "kunilingus-bridge.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model family override. Leave empty to auto-select whatever Copilot model is available."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.109.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "typescript-eslint": "^8.54.0",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.0.0"
+  }
 }
