@@ -2,14 +2,42 @@
   "name": "kunilingus-bridge",
   "displayName": "Kunilingus Bridge",
   "publisher": "fonnzer",
-  "description": "HTTP bridge for OpenClaw bots (Telegram/WhatsApp) to control GitHub Copilot agents in VS Code — vibe code from your phone",
-  "version": "2.1.0",
+  "description": "Bridge your OpenClaw bot (Telegram/WhatsApp) to GitHub Copilot in VS Code — vibe code from your phone anywhere, anytime.",
+  "version": "2.2.0",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlfonsoCifuentes/kunilingus-bridge"
+  },
+  "bugs": {
+    "url": "https://github.com/AlfonsoCifuentes/kunilingus-bridge/issues"
+  },
+  "homepage": "https://github.com/AlfonsoCifuentes/kunilingus-bridge#readme",
   "engines": {
     "vscode": "^1.109.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
   ],
+  "keywords": [
+    "copilot",
+    "bridge",
+    "telegram",
+    "whatsapp",
+    "remote",
+    "vibe-coding",
+    "openclaw",
+    "ai",
+    "llm",
+    "bot"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e2e",
+    "theme": "dark"
+  },
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -18,88 +46,145 @@
     "commands": [
       {
         "command": "kunilingus-bridge.start",
-        "title": "Kunilingus Bridge: Start Server"
+        "title": "Start Server",
+        "category": "Kunilingus Bridge",
+        "icon": "$(play)"
       },
       {
         "command": "kunilingus-bridge.stop",
-        "title": "Kunilingus Bridge: Stop Server"
+        "title": "Stop Server",
+        "category": "Kunilingus Bridge",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "kunilingus-bridge.status",
-        "title": "Kunilingus Bridge: Show Status"
+        "title": "Show Status",
+        "category": "Kunilingus Bridge",
+        "icon": "$(info)"
       },
       {
         "command": "kunilingus-bridge.selectModel",
-        "title": "Kunilingus Bridge: Select AI Model"
+        "title": "Select AI Model",
+        "category": "Kunilingus Bridge",
+        "icon": "$(symbol-enum)"
       },
       {
         "command": "kunilingus-bridge.configureWebhook",
-        "title": "Kunilingus Bridge: Configure Webhook URL"
+        "title": "Configure Webhook URL",
+        "category": "Kunilingus Bridge",
+        "icon": "$(link)"
+      },
+      {
+        "command": "kunilingus-bridge.openSettings",
+        "title": "Open Settings Panel",
+        "category": "Kunilingus Bridge",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "kunilingus-bridge.showLogs",
+        "title": "Show Logs",
+        "category": "Kunilingus Bridge",
+        "icon": "$(output)"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        { "command": "kunilingus-bridge.start", "when": "!kunilingus-bridge.running" },
+        { "command": "kunilingus-bridge.stop", "when": "kunilingus-bridge.running" },
+        { "command": "kunilingus-bridge.status" },
+        { "command": "kunilingus-bridge.selectModel" },
+        { "command": "kunilingus-bridge.configureWebhook" },
+        { "command": "kunilingus-bridge.openSettings" },
+        { "command": "kunilingus-bridge.showLogs" }
+      ]
+    },
     "configuration": {
       "title": "Kunilingus Bridge",
       "properties": {
         "kunilingus-bridge.port": {
           "type": "number",
           "default": 3789,
-          "description": "Port for the HTTP bridge server"
-        },
-        "kunilingus-bridge.autoStart": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically start the bridge server on VS Code startup"
-        },
-        "kunilingus-bridge.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Optional API key to protect the bridge (leave empty to disable)"
-        },
-        "kunilingus-bridge.defaultModel": {
-          "type": "string",
-          "default": "",
-          "description": "Model family override. Leave empty to auto-select whatever Copilot model is available."
-        },
-        "kunilingus-bridge.webhookUrl": {
-          "type": "string",
-          "default": "",
-          "description": "URL where the bridge POSTs results back to your bot (OpenClaw). Leave empty to disable webhook callbacks."
-        },
-        "kunilingus-bridge.webhookSecret": {
-          "type": "string",
-          "default": "",
-          "description": "HMAC-SHA256 secret for signing webhook payloads (X-Bridge-Signature header). Leave empty to skip signing."
-        },
-        "kunilingus-bridge.messagingPlatform": {
-          "type": "string",
-          "enum": ["auto", "telegram", "whatsapp"],
-          "default": "auto",
-          "description": "Target messaging platform — affects response formatting (Markdown for Telegram, plain text for WhatsApp)."
-        },
-        "kunilingus-bridge.maxResponseTokens": {
-          "type": "number",
-          "default": 4096,
-          "description": "Max tokens for LLM responses. Lower = cheaper. 0 = unlimited."
-        },
-        "kunilingus-bridge.summarizeForMessaging": {
-          "type": "boolean",
-          "default": true,
-          "description": "Auto-summarize long responses before sending via webhook to messaging platforms."
-        },
-        "kunilingus-bridge.summaryMaxChars": {
-          "type": "number",
-          "default": 500,
-          "description": "Maximum characters for auto-summaries sent to Telegram/WhatsApp."
-        },
-        "kunilingus-bridge.rateLimitPerMinute": {
-          "type": "number",
-          "default": 60,
-          "description": "Max requests per minute. 0 = unlimited."
+          "description": "Port for the HTTP bridge server.",
+          "minimum": 1024,
+          "maximum": 65535,
+          "order": 1
         },
         "kunilingus-bridge.bindAddress": {
           "type": "string",
           "default": "127.0.0.1",
-          "description": "Network address to bind the server. Use 0.0.0.0 for remote access (always set apiKey when exposing!)."
+          "description": "Network address to bind. Use 0.0.0.0 for remote access (set apiKey when exposed!).",
+          "order": 2
+        },
+        "kunilingus-bridge.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the bridge server automatically when VS Code opens.",
+          "order": 3
+        },
+        "kunilingus-bridge.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for protecting the bridge. Required when binding to 0.0.0.0.",
+          "order": 4
+        },
+        "kunilingus-bridge.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model family override (e.g. 'gpt-4o', 'claude-sonnet'). Leave empty for auto-select.",
+          "order": 10
+        },
+        "kunilingus-bridge.maxResponseTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 0,
+          "description": "Max tokens per LLM response. Lower = cheaper. 0 = unlimited.",
+          "order": 11
+        },
+        "kunilingus-bridge.webhookUrl": {
+          "type": "string",
+          "default": "",
+          "format": "uri",
+          "description": "URL where the bridge POSTs results back to your bot (OpenClaw).",
+          "order": 20
+        },
+        "kunilingus-bridge.webhookSecret": {
+          "type": "string",
+          "default": "",
+          "description": "HMAC-SHA256 secret for signing webhook payloads (X-Bridge-Signature header).",
+          "order": 21
+        },
+        "kunilingus-bridge.messagingPlatform": {
+          "type": "string",
+          "enum": ["auto", "telegram", "whatsapp"],
+          "enumDescriptions": [
+            "Auto-detect based on content",
+            "Format responses with Telegram Markdown",
+            "Format responses with WhatsApp formatting (*bold*, ```code```)"
+          ],
+          "default": "auto",
+          "description": "Target messaging platform for webhook response formatting.",
+          "order": 22
+        },
+        "kunilingus-bridge.summarizeForMessaging": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-summarize long LLM responses before sending via webhook.",
+          "order": 23
+        },
+        "kunilingus-bridge.summaryMaxChars": {
+          "type": "number",
+          "default": 500,
+          "minimum": 100,
+          "maximum": 5000,
+          "description": "Maximum characters for auto-summaries sent to messaging platforms.",
+          "order": 24
+        },
+        "kunilingus-bridge.rateLimitPerMinute": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "description": "Max requests per minute (rate limiting). 0 = unlimited.",
+          "order": 30
         }
       }
     }

@@ -6,12 +6,15 @@ import * as child_process from "child_process";
 import * as crypto from "crypto";
 import * as https from "https";
 
+const VERSION = "2.2.0";
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let server: http.Server | undefined;
 let startTime = 0;
+let requestCount = 0;
 let statusBarItem: vscode.StatusBarItem;
-const output = vscode.window.createOutputChannel("Kunilingus Bridge");
+const output = vscode.window.createOutputChannel("Kunilingus Bridge", { log: true });
 
 // Terminal management
 const managedTerminals = new Map<string, vscode.Terminal>();
@@ -180,7 +183,7 @@ async function deliverWebhook(data: Record<string, unknown>): Promise<void> {
 	const headers: Record<string, string> = {
 		"Content-Type": "application/json",
 		"Content-Length": Buffer.byteLength(payload).toString(),
-		"User-Agent": "KunilingusBridge/2.1",
+		"User-Agent": `KunilingusBridge/${VERSION}`,
 	};
 	if (cfg.webhookSecret) {
 		headers["X-Bridge-Signature"] = `sha256=${signPayload(payload, cfg.webhookSecret)}`;
@@ -283,7 +286,7 @@ async function handleStatus(res: http.ServerResponse): Promise<void> {
 	const status = {
 		active: true,
 		port: cfg.port,
-		version: "2.1.0",
+		version: VERSION,
 		uptime: Math.floor((Date.now() - startTime) / 1000),
 		workspaceFolders: folders,
 		autoAccept: autoAcceptEnabled,
@@ -1624,6 +1627,113 @@ async function handleGrep(
 	}
 }
 
+// ─── Settings Webview ────────────────────────────────────────────────────────
+
+function getSettingsHtml(cfg: BridgeConfig): string {
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kunilingus Bridge Settings</title>
+<style>
+  body { font-family: var(--vscode-font-family, sans-serif); padding: 20px; color: var(--vscode-foreground); background: var(--vscode-editor-background); max-width: 600px; margin: 0 auto; }
+  h1 { font-size: 1.4em; margin-bottom: 4px; }
+  .subtitle { color: var(--vscode-descriptionForeground); font-size: 0.9em; margin-bottom: 20px; }
+  .section { margin-bottom: 24px; }
+  .section h2 { font-size: 1.1em; border-bottom: 1px solid var(--vscode-widget-border, #444); padding-bottom: 4px; margin-bottom: 12px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 0.9em; }
+  .hint { color: var(--vscode-descriptionForeground); font-size: 0.8em; margin-bottom: 8px; }
+  input[type="text"], input[type="number"], select { width: 100%; padding: 6px 8px; border: 1px solid var(--vscode-input-border, #555); background: var(--vscode-input-background); color: var(--vscode-input-foreground); border-radius: 4px; margin-bottom: 4px; box-sizing: border-box; }
+  input[type="checkbox"] { margin-right: 6px; }
+  .check-row { display: flex; align-items: center; margin-bottom: 4px; }
+  .btn { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9em; margin-right: 8px; margin-top: 12px; }
+  .btn-primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+  .btn-primary:hover { background: var(--vscode-button-hoverBackground); }
+  .btn-secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+</style>
+</head>
+<body>
+<h1>Kunilingus Bridge</h1>
+<p class="subtitle">v${VERSION} &mdash; Configure your bridge server</p>
+
+<div class="section">
+  <h2>Server</h2>
+  <label>Port</label>
+  <input type="number" id="port" value="${cfg.port}" min="1024" max="65535">
+  <div class="hint">TCP port for the HTTP server (default: 3789)</div>
+  <label>Bind Address</label>
+  <input type="text" id="bindAddress" value="${cfg.bindAddress}">
+  <div class="hint">Use 0.0.0.0 for remote access. Always set an API key when exposed!</div>
+  <div class="check-row"><input type="checkbox" id="autoStart" ${cfg.autoStart ? "checked" : ""}><label for="autoStart" style="display:inline;font-weight:normal">Auto-start server on VS Code launch</label></div>
+  <label>API Key</label>
+  <input type="text" id="apiKey" value="${escapeHtml(cfg.apiKey)}" placeholder="(empty = no auth)">
+  <div class="hint">Bearer token for protecting the bridge</div>
+  <label>Rate Limit (req/min)</label>
+  <input type="number" id="rateLimitPerMinute" value="${cfg.rateLimitPerMinute}" min="0">
+  <div class="hint">0 = unlimited</div>
+</div>
+
+<div class="section">
+  <h2>AI Model</h2>
+  <label>Default Model Family</label>
+  <input type="text" id="defaultModel" value="${escapeHtml(cfg.defaultModel)}" placeholder="(auto)">
+  <div class="hint">e.g. gpt-4o, claude-sonnet. Leave empty for auto-select.</div>
+  <label>Max Response Tokens</label>
+  <input type="number" id="maxResponseTokens" value="${cfg.maxResponseTokens}" min="0">
+  <div class="hint">0 = unlimited</div>
+</div>
+
+<div class="section">
+  <h2>Webhook / Bot Integration</h2>
+  <label>Webhook URL</label>
+  <input type="text" id="webhookUrl" value="${escapeHtml(cfg.webhookUrl)}" placeholder="https://your-bot.example.com/webhook">
+  <label>Webhook Secret</label>
+  <input type="text" id="webhookSecret" value="${escapeHtml(cfg.webhookSecret)}" placeholder="(optional HMAC-SHA256 secret)">
+  <label>Messaging Platform</label>
+  <select id="messagingPlatform">
+    <option value="auto" ${cfg.messagingPlatform === "auto" ? "selected" : ""}>Auto-detect</option>
+    <option value="telegram" ${cfg.messagingPlatform === "telegram" ? "selected" : ""}>Telegram</option>
+    <option value="whatsapp" ${cfg.messagingPlatform === "whatsapp" ? "selected" : ""}>WhatsApp</option>
+  </select>
+  <div class="check-row" style="margin-top:8px"><input type="checkbox" id="summarizeForMessaging" ${cfg.summarizeForMessaging ? "checked" : ""}><label for="summarizeForMessaging" style="display:inline;font-weight:normal">Auto-summarize long responses</label></div>
+  <label>Summary Max Chars</label>
+  <input type="number" id="summaryMaxChars" value="${cfg.summaryMaxChars}" min="100" max="5000">
+</div>
+
+<button class="btn btn-primary" onclick="save()">Save Settings</button>
+<button class="btn btn-secondary" onclick="openNative()">Open in VS Code Settings</button>
+
+<script>
+  const vscode = acquireVsCodeApi();
+  function val(id) { return document.getElementById(id).value; }
+  function checked(id) { return document.getElementById(id).checked; }
+  function save() {
+    vscode.postMessage({ type: 'save', settings: {
+      port: parseInt(val('port')),
+      bindAddress: val('bindAddress'),
+      autoStart: checked('autoStart'),
+      apiKey: val('apiKey'),
+      rateLimitPerMinute: parseInt(val('rateLimitPerMinute')),
+      defaultModel: val('defaultModel'),
+      maxResponseTokens: parseInt(val('maxResponseTokens')),
+      webhookUrl: val('webhookUrl'),
+      webhookSecret: val('webhookSecret'),
+      messagingPlatform: val('messagingPlatform'),
+      summarizeForMessaging: checked('summarizeForMessaging'),
+      summaryMaxChars: parseInt(val('summaryMaxChars')),
+    }});
+  }
+  function openNative() { vscode.postMessage({ type: 'openNative' }); }
+</script>
+</body>
+</html>`;
+}
+
+function escapeHtml(s: string): string {
+	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── SERVER LIFECYCLE ────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1654,6 +1764,8 @@ function startServer(): void {
 			sendJson(res, 429, { error: "Rate limit exceeded. Try again later." });
 			return;
 		}
+
+		requestCount++;
 
 		const url = new URL(
 			req.url || "/",
@@ -1935,10 +2047,11 @@ function startServer(): void {
 
 	server.listen(port, bindAddress, () => {
 		startTime = Date.now();
-		log(`Bridge v2.1 listening on http://${bindAddress}:${port}`);
+		log(`Bridge v${VERSION} listening on http://${bindAddress}:${port}`);
 		vscode.window.showInformationMessage(
-			`Kunilingus Bridge v2.1 active on ${bindAddress}:${port}`
+			`Kunilingus Bridge v${VERSION} active on ${bindAddress}:${port}`
 		);
+		vscode.commands.executeCommand('setContext', 'kunilingus-bridge.running', true);
 		updateStatusBar(true, port);
 
 		// Auto-configure for vibe coding on start
@@ -1963,6 +2076,7 @@ function startServer(): void {
 		}
 		log(`Server error: ${err.message}`);
 		server = undefined;
+		vscode.commands.executeCommand('setContext', 'kunilingus-bridge.running', false);
 		updateStatusBar(false);
 	});
 }
@@ -1973,6 +2087,7 @@ function stopServer(): void {
 		server = undefined;
 		log("Bridge server stopped");
 		vscode.window.showInformationMessage("Kunilingus Bridge stopped");
+		vscode.commands.executeCommand('setContext', 'kunilingus-bridge.running', false);
 		updateStatusBar(false);
 	}
 }
@@ -1980,7 +2095,7 @@ function stopServer(): void {
 function updateStatusBar(active: boolean, port?: number): void {
 	if (active) {
 		statusBarItem.text = `$(radio-tower) Bridge :${port}`;
-		statusBarItem.tooltip = `Kunilingus Bridge v2 active on port ${port}`;
+		statusBarItem.tooltip = `Kunilingus Bridge v${VERSION} active on port ${port}`;
 		statusBarItem.color = new vscode.ThemeColor(
 			"statusBarItem.warningForeground"
 		);
@@ -2025,7 +2140,7 @@ export function activate(context: vscode.ExtensionContext): void {
 					);
 					const models = await vscode.lm.selectChatModels({});
 					vscode.window.showInformationMessage(
-						`Bridge v2: ON | Port: ${cfg.port} | Uptime: ${uptime}s | Models: ${models.length}`
+						`Bridge v${VERSION}: ON | Port: ${cfg.port} | Uptime: ${uptime}s | Requests: ${requestCount} | Models: ${models.length}`
 					);
 				} else {
 					const action =
@@ -2084,10 +2199,40 @@ export function activate(context: vscode.ExtensionContext): void {
 					);
 				}
 			}
+		),
+		vscode.commands.registerCommand(
+			"kunilingus-bridge.openSettings",
+			() => {
+				const panel = vscode.window.createWebviewPanel(
+					"kunilingus-bridge-settings",
+					"Kunilingus Bridge Settings",
+					vscode.ViewColumn.One,
+					{ enableScripts: true }
+				);
+				const cfg = getConfig();
+				panel.webview.html = getSettingsHtml(cfg);
+				panel.webview.onDidReceiveMessage(async (msg) => {
+					if (msg.type === "save") {
+						const section = vscode.workspace.getConfiguration("kunilingus-bridge");
+						for (const [key, value] of Object.entries(msg.settings)) {
+							await section.update(key, value, vscode.ConfigurationTarget.Global);
+						}
+						vscode.window.showInformationMessage("Settings saved!");
+						panel.webview.html = getSettingsHtml(getConfig());
+					} else if (msg.type === "openNative") {
+						vscode.commands.executeCommand("workbench.action.openSettings", "kunilingus-bridge");
+					}
+				});
+			}
+		),
+		vscode.commands.registerCommand(
+			"kunilingus-bridge.showLogs",
+			() => { output.show(true); }
 		)
 	);
 
 	// Auto-start
+	vscode.commands.executeCommand('setContext', 'kunilingus-bridge.running', false);
 	if (getConfig().autoStart) {
 		startServer();
 	} else {
@@ -2119,7 +2264,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		})
 	);
 
-	log("Extension v2 activated");
+	log(`Extension v${VERSION} activated`);
 }
 
 export function deactivate(): void {
