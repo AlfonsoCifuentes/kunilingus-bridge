@@ -2,8 +2,8 @@
   "name": "kunilingus-bridge",
   "displayName": "Kunilingus Bridge",
   "publisher": "fonnzer",
-  "description": "HTTP bridge for Clawbot to access GitHub Copilot LLM via VS Code",
-  "version": "1.0.0",
+  "description": "HTTP bridge for OpenClaw bots (Telegram/WhatsApp) to control GitHub Copilot agents in VS Code — vibe code from your phone",
+  "version": "2.1.0",
   "engines": {
     "vscode": "^1.109.0"
   },
@@ -27,6 +27,14 @@
       {
         "command": "kunilingus-bridge.status",
         "title": "Kunilingus Bridge: Show Status"
+      },
+      {
+        "command": "kunilingus-bridge.selectModel",
+        "title": "Kunilingus Bridge: Select AI Model"
+      },
+      {
+        "command": "kunilingus-bridge.configureWebhook",
+        "title": "Kunilingus Bridge: Configure Webhook URL"
       }
     ],
     "configuration": {
@@ -51,6 +59,47 @@
           "type": "string",
           "default": "",
           "description": "Model family override. Leave empty to auto-select whatever Copilot model is available."
+        },
+        "kunilingus-bridge.webhookUrl": {
+          "type": "string",
+          "default": "",
+          "description": "URL where the bridge POSTs results back to your bot (OpenClaw). Leave empty to disable webhook callbacks."
+        },
+        "kunilingus-bridge.webhookSecret": {
+          "type": "string",
+          "default": "",
+          "description": "HMAC-SHA256 secret for signing webhook payloads (X-Bridge-Signature header). Leave empty to skip signing."
+        },
+        "kunilingus-bridge.messagingPlatform": {
+          "type": "string",
+          "enum": ["auto", "telegram", "whatsapp"],
+          "default": "auto",
+          "description": "Target messaging platform — affects response formatting (Markdown for Telegram, plain text for WhatsApp)."
+        },
+        "kunilingus-bridge.maxResponseTokens": {
+          "type": "number",
+          "default": 4096,
+          "description": "Max tokens for LLM responses. Lower = cheaper. 0 = unlimited."
+        },
+        "kunilingus-bridge.summarizeForMessaging": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-summarize long responses before sending via webhook to messaging platforms."
+        },
+        "kunilingus-bridge.summaryMaxChars": {
+          "type": "number",
+          "default": 500,
+          "description": "Maximum characters for auto-summaries sent to Telegram/WhatsApp."
+        },
+        "kunilingus-bridge.rateLimitPerMinute": {
+          "type": "number",
+          "default": 60,
+          "description": "Max requests per minute. 0 = unlimited."
+        },
+        "kunilingus-bridge.bindAddress": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Network address to bind the server. Use 0.0.0.0 for remote access (always set apiKey when exposing!)."
         }
       }
     }

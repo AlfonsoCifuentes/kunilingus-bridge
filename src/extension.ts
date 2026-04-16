@@ -3,6 +3,8 @@ import * as http from "http";
 import * as fs from "fs";
 import * as path from "path";
 import * as child_process from "child_process";
+import * as crypto from "crypto";
+import * as https from "https";
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -27,6 +29,9 @@ interface QueuedMessage {
 }
 const messageQueue: QueuedMessage[] = [];
 
+// Rate limiting
+const requestTimestamps: number[] = [];
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 interface BridgeConfig {
@@ -34,6 +39,14 @@ interface BridgeConfig {
 	autoStart: boolean;
 	apiKey: string;
 	defaultModel: string;
+	webhookUrl: string;
+	webhookSecret: string;
+	messagingPlatform: "auto" | "telegram" | "whatsapp";
+	maxResponseTokens: number;
+	summarizeForMessaging: boolean;
+	summaryMaxChars: number;
+	rateLimitPerMinute: number;
+	bindAddress: string;
 }
 
 function getConfig(): BridgeConfig {
@@ -43,6 +56,14 @@ function getConfig(): BridgeConfig {
 		autoStart: cfg.get("autoStart", true),
 		apiKey: cfg.get("apiKey", ""),
 		defaultModel: cfg.get("defaultModel", ""),
+		webhookUrl: cfg.get("webhookUrl", ""),
+		webhookSecret: cfg.get("webhookSecret", ""),
+		messagingPlatform: cfg.get("messagingPlatform", "auto") as "auto" | "telegram" | "whatsapp",
+		maxResponseTokens: cfg.get("maxResponseTokens", 4096),
+		summarizeForMessaging: cfg.get("summarizeForMessaging", true),
+		summaryMaxChars: cfg.get("summaryMaxChars", 500),
+		rateLimitPerMinute: cfg.get("rateLimitPerMinute", 60),
+		bindAddress: cfg.get("bindAddress", "127.0.0.1"),
 	};
 }
 
@@ -127,6 +148,127 @@ function parseBody(raw: string, res: http.ServerResponse): any | null {
 	}
 }
 
+// ─── Rate Limiter ────────────────────────────────────────────────────────────
+
+function checkRateLimit(limit: number): boolean {
+	if (limit <= 0) return true;
+	const now = Date.now();
+	const windowStart = now - 60_000;
+	while (requestTimestamps.length > 0 && requestTimestamps[0] < windowStart) {
+		requestTimestamps.shift();
+	}
+	if (requestTimestamps.length >= limit) return false;
+	requestTimestamps.push(now);
+	return true;
+}
+
+// ─── Webhook Delivery ────────────────────────────────────────────────────────
+
+function signPayload(payload: string, secret: string): string {
+	return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+async function deliverWebhook(data: Record<string, unknown>): Promise<void> {
+	const cfg = getConfig();
+	if (!cfg.webhookUrl) return;
+
+	const payload = JSON.stringify(data);
+	const url = new URL(cfg.webhookUrl);
+	const isHttps = url.protocol === "https:";
+	const mod = isHttps ? https : http;
+
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+		"Content-Length": Buffer.byteLength(payload).toString(),
+		"User-Agent": "KunilingusBridge/2.1",
+	};
+	if (cfg.webhookSecret) {
+		headers["X-Bridge-Signature"] = `sha256=${signPayload(payload, cfg.webhookSecret)}`;
+	}
+
+	return new Promise((resolve) => {
+		const req = mod.request(
+			{
+				hostname: url.hostname,
+				port: url.port || (isHttps ? 443 : 80),
+				path: url.pathname + url.search,
+				method: "POST",
+				headers,
+				timeout: 10_000,
+			},
+			(res) => {
+				res.resume();
+				res.on("end", () => resolve());
+			}
+		);
+		req.on("error", (e) => log(`Webhook error: ${e.message}`));
+		req.on("timeout", () => { req.destroy(); resolve(); });
+		req.write(payload);
+		req.end();
+	});
+}
+
+// ─── Response Formatting ─────────────────────────────────────────────────────
+
+function formatForPlatform(text: string, platform: string): string {
+	if (platform === "whatsapp") {
+		return text
+			.replace(/#{1,6}\s+(.+)/g, "*$1*")
+			.replace(/\*\*(.+?)\*\*/g, "*$1*")
+			.replace(/`([^`]+)`/g, "```$1```");
+	}
+	return text;
+}
+
+async function summarizeResponse(fullText: string, maxChars: number): Promise<string> {
+	if (fullText.length <= maxChars) return fullText;
+	try {
+		const model = await pickModel();
+		if (!model) return fullText.slice(0, maxChars) + "…";
+
+		const msgs = [
+			vscode.LanguageModelChatMessage.User(
+				`Summarize the following in ${maxChars} characters max. Be concise, keep key actions and results:\n\n${fullText}`
+			),
+		];
+		const response = await model.sendRequest(msgs, {});
+		let summary = "";
+		for await (const chunk of response.text) {
+			summary += chunk;
+			if (summary.length > maxChars) break;
+		}
+		return summary.slice(0, maxChars);
+	} catch {
+		return fullText.slice(0, maxChars) + "…";
+	}
+}
+
+async function processAndDeliverResponse(
+	responseText: string,
+	requestMessage: string,
+	modelId: string
+): Promise<void> {
+	const cfg = getConfig();
+	if (!cfg.webhookUrl) return;
+
+	let deliveryText = responseText;
+	if (cfg.summarizeForMessaging && responseText.length > cfg.summaryMaxChars) {
+		deliveryText = await summarizeResponse(responseText, cfg.summaryMaxChars);
+	}
+	deliveryText = formatForPlatform(deliveryText, cfg.messagingPlatform);
+
+	await deliverWebhook({
+		type: "response",
+		platform: cfg.messagingPlatform,
+		model: modelId,
+		request: requestMessage.slice(0, 200),
+		response: deliveryText,
+		fullLength: responseText.length,
+		summarized: deliveryText !== responseText,
+		timestamp: new Date().toISOString(),
+	});
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ─── ROUTE HANDLERS ──────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -141,10 +283,13 @@ async function handleStatus(res: http.ServerResponse): Promise<void> {
 	const status = {
 		active: true,
 		port: cfg.port,
-		version: "2.0.0",
+		version: "2.1.0",
 		uptime: Math.floor((Date.now() - startTime) / 1000),
 		workspaceFolders: folders,
 		autoAccept: autoAcceptEnabled,
+		webhookConfigured: !!cfg.webhookUrl,
+		messagingPlatform: cfg.messagingPlatform,
+		defaultModel: cfg.defaultModel || "auto",
 	};
 	sendJson(res, 200, status);
 }
@@ -207,7 +352,10 @@ async function handleChat(
 	);
 
 	try {
-		const response = await model.sendRequest(lmMessages, {});
+		const maxTokens = body.maxTokens || cfg.maxResponseTokens;
+		const response = await model.sendRequest(lmMessages, {
+			modelOptions: maxTokens > 0 ? { max_tokens: maxTokens } : undefined,
+		});
 		if (body.stream) {
 			res.writeHead(200, {
 				"Content-Type": "text/event-stream",
@@ -225,6 +373,8 @@ async function handleChat(
 				fullText += chunk;
 			}
 			sendJson(res, 200, { response: fullText, model: model.id });
+			const userMsg = chatMessages[chatMessages.length - 1]?.content || "";
+			processAndDeliverResponse(fullText, userMsg, model.id).catch(() => {});
 		}
 	} catch (e) {
 		if (e instanceof vscode.LanguageModelError) {
@@ -274,7 +424,10 @@ async function handleCompletions(
 
 	const lmMessages = buildMessages(chatMsgs, systemPrompt?.trim());
 	try {
-		const response = await model.sendRequest(lmMessages, {});
+		const maxTokens = body.max_tokens || cfg.maxResponseTokens;
+		const response = await model.sendRequest(lmMessages, {
+			modelOptions: maxTokens > 0 ? { max_tokens: maxTokens } : undefined,
+		});
 		const id = `chatcmpl-${Date.now()}`;
 
 		if (body.stream) {
@@ -336,6 +489,8 @@ async function handleCompletions(
 					total_tokens: 0,
 				},
 			});
+			const userMsg = chatMsgs[chatMsgs.length - 1]?.content || "";
+			processAndDeliverResponse(fullText, userMsg, model.id).catch(() => {});
 		}
 	} catch (e) {
 		sendJson(res, 500, {
@@ -1074,6 +1229,11 @@ async function handleCopilotChat(
 				action: "message_sent",
 				message: body.message,
 			});
+			deliverWebhook({
+				type: "copilot_chat",
+				message: body.message,
+				timestamp: new Date().toISOString(),
+			}).catch(() => {});
 		} else {
 			sendJson(res, 400, {
 				error: 'Provide "message" or "action" (open|clear|accept|discard)',
@@ -1468,11 +1628,13 @@ async function handleGrep(
 // ─── SERVER LIFECYCLE ────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function startServer(port: number, apiKey: string): void {
+function startServer(): void {
 	if (server) {
 		log("Server already running");
 		return;
 	}
+
+	const { port, apiKey, bindAddress, rateLimitPerMinute } = getConfig();
 
 	server = http.createServer(async (req, res) => {
 		setCors(res);
@@ -1488,9 +1650,14 @@ function startServer(port: number, apiKey: string): void {
 			return;
 		}
 
+		if (!checkRateLimit(rateLimitPerMinute)) {
+			sendJson(res, 429, { error: "Rate limit exceeded. Try again later." });
+			return;
+		}
+
 		const url = new URL(
 			req.url || "/",
-			`http://127.0.0.1:${port}`
+			`http://${bindAddress}:${port}`
 		);
 		const p = url.pathname;
 
@@ -1661,6 +1828,96 @@ function startServer(port: number, apiKey: string): void {
 			else if (p === "/messages" && req.method === "GET") {
 				await handleMessages(req, res);
 			}
+			// ── Configuration / Model Selection ──
+			else if (p === "/config" && req.method === "GET") {
+				const currentCfg = getConfig();
+				sendJson(res, 200, {
+					port: currentCfg.port,
+					defaultModel: currentCfg.defaultModel || "auto",
+					webhookUrl: currentCfg.webhookUrl ? "configured" : "not set",
+					messagingPlatform: currentCfg.messagingPlatform,
+					maxResponseTokens: currentCfg.maxResponseTokens,
+					summarizeForMessaging: currentCfg.summarizeForMessaging,
+					summaryMaxChars: currentCfg.summaryMaxChars,
+					rateLimitPerMinute: currentCfg.rateLimitPerMinute,
+				});
+			}
+			else if (p === "/select-model" && req.method === "POST") {
+				const raw = await readBody(req);
+				const body = parseBody(raw, res);
+				if (!body) return;
+				if (!body.family) {
+					sendJson(res, 400, { error: '"family" required (e.g. "gpt-4o", "claude-sonnet")' });
+					return;
+				}
+				await vscode.workspace
+					.getConfiguration("kunilingus-bridge")
+					.update("defaultModel", body.family, vscode.ConfigurationTarget.Global);
+				const model = await pickModel(body.family);
+				sendJson(res, 200, {
+					ok: true,
+					family: body.family,
+					resolvedModel: model ? model.id : null,
+				});
+			}
+			else if (p === "/webhook/test" && req.method === "POST") {
+				const currentCfg = getConfig();
+				if (!currentCfg.webhookUrl) {
+					sendJson(res, 400, { error: "No webhook URL configured. Set kunilingus-bridge.webhookUrl in settings." });
+					return;
+				}
+				await deliverWebhook({
+					type: "test",
+					message: "Kunilingus Bridge webhook test",
+					timestamp: new Date().toISOString(),
+				});
+				sendJson(res, 200, { ok: true, webhookUrl: currentCfg.webhookUrl });
+			}
+			else if (p === "/endpoints" && req.method === "GET") {
+				sendJson(res, 200, {
+					endpoints: [
+						{ method: "GET", path: "/status" },
+						{ method: "GET", path: "/models" },
+						{ method: "GET", path: "/config" },
+						{ method: "GET", path: "/endpoints" },
+						{ method: "POST", path: "/chat" },
+						{ method: "POST", path: "/v1/chat/completions" },
+						{ method: "POST", path: "/select-model" },
+						{ method: "POST", path: "/webhook/test" },
+						{ method: "GET", path: "/workspace/folders" },
+						{ method: "POST", path: "/workspace/open" },
+						{ method: "POST", path: "/workspace/add" },
+						{ method: "POST", path: "/workspace/remove" },
+						{ method: "GET", path: "/files/list" },
+						{ method: "POST", path: "/files/read" },
+						{ method: "POST", path: "/files/write" },
+						{ method: "POST", path: "/files/delete" },
+						{ method: "POST", path: "/files/mkdir" },
+						{ method: "POST", path: "/files/rename" },
+						{ method: "POST", path: "/files/search" },
+						{ method: "POST", path: "/editor/open" },
+						{ method: "GET", path: "/editor/active" },
+						{ method: "POST", path: "/editor/edit" },
+						{ method: "POST", path: "/editor/replace" },
+						{ method: "POST", path: "/editor/diff" },
+						{ method: "POST", path: "/editor/save-all" },
+						{ method: "POST", path: "/editor/close" },
+						{ method: "POST", path: "/terminal/exec" },
+						{ method: "POST", path: "/terminal/create" },
+						{ method: "POST", path: "/terminal/send" },
+						{ method: "GET", path: "/terminal/list" },
+						{ method: "POST", path: "/git" },
+						{ method: "POST", path: "/copilot" },
+						{ method: "GET", path: "/diagnostics" },
+						{ method: "POST", path: "/auto-accept" },
+						{ method: "POST", path: "/trust" },
+						{ method: "POST", path: "/setup-vibe-coding" },
+						{ method: "POST", path: "/command" },
+						{ method: "POST", path: "/say" },
+						{ method: "GET", path: "/messages" },
+					],
+				});
+			}
 			// ── 404 ──
 			else {
 				sendJson(res, 404, {
@@ -1676,11 +1933,11 @@ function startServer(port: number, apiKey: string): void {
 		}
 	});
 
-	server.listen(port, "127.0.0.1", () => {
+	server.listen(port, bindAddress, () => {
 		startTime = Date.now();
-		log(`Bridge v2 listening on http://127.0.0.1:${port}`);
+		log(`Bridge v2.1 listening on http://${bindAddress}:${port}`);
 		vscode.window.showInformationMessage(
-			`Kunilingus Bridge v2 active on port ${port}`
+			`Kunilingus Bridge v2.1 active on ${bindAddress}:${port}`
 		);
 		updateStatusBar(true, port);
 
@@ -1753,8 +2010,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	// Commands
 	context.subscriptions.push(
 		vscode.commands.registerCommand("kunilingus-bridge.start", () => {
-			const cfg = getConfig();
-			startServer(cfg.port, cfg.apiKey);
+			startServer();
 		}),
 		vscode.commands.registerCommand("kunilingus-bridge.stop", () =>
 			stopServer()
@@ -1784,13 +2040,56 @@ export function activate(context: vscode.ExtensionContext): void {
 					}
 				}
 			}
+		),
+		vscode.commands.registerCommand(
+			"kunilingus-bridge.selectModel",
+			async () => {
+				const models = await vscode.lm.selectChatModels({});
+				if (models.length === 0) {
+					vscode.window.showWarningMessage("No language models available");
+					return;
+				}
+				const items = models.map((m) => ({
+					label: m.id,
+					description: `${m.vendor} · ${m.family}`,
+					detail: `Max input: ${m.maxInputTokens} tokens`,
+					family: m.family,
+				}));
+				const selected = await vscode.window.showQuickPick(items, {
+					placeHolder: "Select the AI model for Kunilingus Bridge",
+				});
+				if (selected) {
+					await vscode.workspace
+						.getConfiguration("kunilingus-bridge")
+						.update("defaultModel", selected.family, vscode.ConfigurationTarget.Global);
+					vscode.window.showInformationMessage(`Model set to: ${selected.label}`);
+				}
+			}
+		),
+		vscode.commands.registerCommand(
+			"kunilingus-bridge.configureWebhook",
+			async () => {
+				const currentCfg = getConfig();
+				const url = await vscode.window.showInputBox({
+					prompt: "Webhook URL where responses will be POSTed to your bot (leave empty to disable)",
+					value: currentCfg.webhookUrl,
+					placeHolder: "https://your-openclaw-bot.example.com/webhook",
+				});
+				if (url !== undefined) {
+					await vscode.workspace
+						.getConfiguration("kunilingus-bridge")
+						.update("webhookUrl", url, vscode.ConfigurationTarget.Global);
+					vscode.window.showInformationMessage(
+						url ? `Webhook configured: ${url}` : "Webhook disabled"
+					);
+				}
+			}
 		)
 	);
 
 	// Auto-start
-	const cfg = getConfig();
-	if (cfg.autoStart) {
-		startServer(cfg.port, cfg.apiKey);
+	if (getConfig().autoStart) {
+		startServer();
 	} else {
 		updateStatusBar(false);
 	}
@@ -1802,8 +2101,7 @@ export function activate(context: vscode.ExtensionContext): void {
 				const wasRunning = !!server;
 				if (wasRunning) {
 					stopServer();
-					const newCfg = getConfig();
-					startServer(newCfg.port, newCfg.apiKey);
+					startServer();
 				}
 			}
 		})
